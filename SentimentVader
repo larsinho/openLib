@@ -1,0 +1,93 @@
+#!/usr/bin/python3.6
+
+
+# mysql -ularsinho -hlarsinho.mysql.pythonanywhere-services.com -p
+# USE larsinho$data_storage;
+# SELECT * FROM dataReddit ORDER BY time DESC LIMIT 50;
+#  SELECT COUNT(*) FROM dataReddit;
+
+# CREATE TABLE dataReddit (time int(12),text varchar(1000), title varchar(100));
+
+import time
+import praw
+import re
+import MySQLdb
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+c = conn.cursor()
+
+
+prev_time = time.time() -60*60 # previous time information was gathered
+regexp = re.compile(r'Daily')
+
+# ---------------------------------------------- #
+# r/Bitcoin
+
+analyzer = SentimentIntensityAnalyzer()
+
+subreddit = reddit.subreddit('bitcoin')
+hot_python = subreddit.hot(limit=3)
+
+for submission in hot_python:
+    if regexp.search(submission.title):
+        print('1: ',submission.title)
+        submission.comments.replace_more(limit=0)
+        comments = submission.comments
+        for comment in comments:
+            #print(comment.created_utc - prev_time)
+            if comment.created_utc > prev_time: # ONLY save if it was not accounted for last time
+                #c.execute("INSERT INTO dataReddit  (time, text, score) VALUES (%s, %s, %s)",
+                #            (comment.created_utc, comment.body.encode('latin-1', 'ignore')))
+                comment_encoded = comment.body.encode('latin-1', 'ignore')
+                vs = analyzer.polarity_scores(comment.body)
+                c.execute("INSERT INTO dataReddit  (time, text,sentiment_score) VALUES (%s, %s, %s)",
+                    (comment.created_utc, comment_encoded, vs['compound']))
+            if len(comment.replies) > 0 :
+                for reply in comment.replies:
+                    if reply.created_utc > prev_time and len(reply.body) >4: # ONLY save if it was not accounted for last time
+                        reply_encoded = reply.body.encode('latin-1', 'ignore')
+                        vs = analyzer.polarity_scores(reply.body)
+                        c.execute("INSERT INTO dataReddit  (time, text,sentiment_score) VALUES (%s, %s, %s)",
+                            (reply.created_utc, reply_encoded, vs['compound']))
+
+
+
+# ---------------------------------------------- #
+# r/BitcoinMarkets
+
+
+
+subreddit = reddit.subreddit('BitcoinMarkets')
+hot_python = subreddit.hot(limit=3)
+
+for submission in hot_python:
+    if regexp.search(submission.title):
+        print('2: ', submission.title)
+        submission.comments.replace_more(limit=0)
+        comments = submission.comments
+        for comment in comments:
+            if comment.created_utc > prev_time: # ONLY save if it was not accounted for last time
+                comment_encoded = comment.body.encode('latin-1', 'ignore')
+                vs = analyzer.polarity_scores(comment.body)
+                c.execute("INSERT INTO dataReddit  (time, text,sentiment_score) VALUES (%s, %s, %s)",
+                    (comment.created_utc, comment_encoded, vs['compound']))
+            if len(comment.replies) > 0:
+                for reply in comment.replies:
+                    #print(reply.body)
+                    if reply.created_utc > prev_time  and len(reply.body) > 4: # ONLY save if it was not accounted for last time
+                        reply_encoded = reply.body.encode('latin-1', 'ignore')
+                        vs = analyzer.polarity_scores(reply.body)
+                        c.execute("INSERT INTO dataReddit  (time, text,sentiment_score) VALUES (%s, %s, %s)",
+                            (reply.created_utc, reply_encoded, vs['compound']))
+
+
+
+conn.commit() # saves to DB
+conn.close()
+
+
+
+
+
+
+
