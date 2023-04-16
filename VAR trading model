@@ -1,0 +1,136 @@
+#!/usr/bin/python3.6
+
+import MySQLdb
+import pandas as pd
+import numpy as np
+#from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import matplotlib.dates as mdates
+myFmt = mdates.DateFormatter('%b-%d %H:%M')
+from statsmodels.tsa.api import VAR
+
+# Getting data from reddit streams:
+conn1 = MySQLdb.connect("larsinho.mysql.pythonanywhere-services.com",
+                        "",
+                        "",
+                        "")
+c1 = conn1.cursor()
+df_reddit = pd.read_sql('SELECT * FROM dataReddit', con=conn1)
+
+df_reddit.index = pd.to_datetime(df_reddit['time'].values,unit='s')
+
+sentimentScores = df_reddit.sentiment_score.ewm(com=500).mean().resample('60T',base = 0).last()
+
+conn1.close()
+
+'''
+# Analyze all posts
+analyzer = SentimentIntensityAnalyzer()
+d = []
+for index, row in df_reddit.iterrows():
+    vs = analyzer.polarity_scores(row.text)
+    d.append({'index': index,
+              'time': row.time,
+              'positive': vs['pos'],
+              'neutral': vs['neu'],
+              'negative': vs['neg'],
+              'compound': vs['compound']})
+
+
+sentimentFrame = pd.DataFrame(d)
+sentimentFrame.index = df_reddit.index.values
+
+sentimentScores = sentimentFrame[['compound']]
+
+
+df_reddit['sentimentScores'] = sentimentScores.values
+
+df_reddit.fillna(value=0)
+i = 0
+for sent in df_reddit.iterrows():
+    i = i + 1
+    time = sent[1][0]
+    score =  sent[1][3]
+    # print( ' %', time, score)
+    c1.execute("UPDATE dataReddit SET sentiment_score=%s WHERE time=%s", (score, time))
+    if i %500 == 0:
+        print('commit', i/len(df_reddit)*100 , '%')
+        conn1.commit()
+
+
+'''
+
+
+
+
+
+
+# ----------------------------------- #
+# ------ Crypto streams ------------- #
+
+conn2 = MySQLdb.connect("larsinho.mysql.pythonanywhere-services.com",
+                        "",
+                        "",
+                        "larsinho$dataCrypto")
+c2 = conn2.cursor()
+
+df_btc = pd.read_sql('SELECT * FROM dataBTC', con=conn2)
+df_bch = pd.read_sql('SELECT * FROM dataBCH', con=conn2)
+df_eth = pd.read_sql('SELECT * FROM dataETH', con=conn2)
+df_ltc = pd.read_sql('SELECT * FROM dataLTC', con=conn2)
+df_xrp = pd.read_sql('SELECT * FROM dataXRP', con=conn2)
+
+df_btc.index = pd.to_datetime(df_btc['timestamp'].values,unit='s')
+df_bch.index = pd.to_datetime(df_btc['timestamp'].values,unit='s')
+df_eth.index = pd.to_datetime(df_btc['timestamp'].values,unit='s')
+df_ltc.index = pd.to_datetime(df_btc['timestamp'].values,unit='s')
+df_xrp.index = pd.to_datetime(df_btc['timestamp'].values,unit='s')
+
+df = pd.DataFrame()
+
+df['last_btc'] = df_btc['last'] #.ewm(com=500).mean()
+df['last_bch'] = df_bch['last'] #.ewm(com=500).mean()
+df['last_eth'] = df_eth['last'] #.ewm(com=500).mean()
+df['last_ltc'] = df_ltc['last'] #.ewm(com=500).mean()
+df['last_xrp'] = df_xrp['last'] #.ewm(com=500).mean()
+
+# aggregate data: # 60 minutes
+df = df.resample('60T',base = 0).last()
+df = df.dropna(axis=0, how='all')
+
+df['log_ret_btc'] = np.log(df['last_btc']) - np.log(df['last_btc'].shift(1))
+df['log_ret_bch'] = np.log(df['last_bch']) - np.log(df['last_bch'].shift(1))
+df['log_ret_eth'] = np.log(df['last_eth']) - np.log(df['last_eth'].shift(1))
+df['log_ret_ltc'] = np.log(df['last_ltc']) - np.log(df['last_ltc'].shift(1))
+df['log_ret_xrp'] = np.log(df['last_xrp']) - np.log(df['last_xrp'].shift(1))
+
+data = df[['log_ret_btc', 'log_ret_bch', 'log_ret_eth', 'log_ret_ltc', 'log_ret_xrp']]
+
+last_index = sentimentScores.index[-1]
+
+mask = (data.index >= '2018-02-01') & (data.index <= last_index)
+price_cut = data[mask]
+mask = (sentimentScores.index >= '2018-02-01')
+sentiment_cut = sentimentScores[mask]
+
+df_col_merged =pd.concat([price_cut, sentiment_cut], axis=1)
+df_col_merged.tail()
+
+df_col_merged = df_col_merged.fillna(0)
+
+# Estimating model
+resultsVAR = VAR(df_col_merged).fit(maxlags=10, ic='aic')
+
+#lag_order = resultsVAR.k_ar
+lag_order = 3
+#print('Number of lags:', lag_order)
+
+print(resultsVAR.summary())
+
+text_file = open("Output {}.txt".format('VAR'), "w")
+text_file.write(resultsVAR.summary().__str__())
+text_file.close()
+
+
+resultsVAR.save("/home/larsinho/tradingBot/VAR_results_withSentiment.pickle")
+
+conn2.close()
